@@ -27,8 +27,8 @@ def check_address(street, a_links, street_addresses=None):
         not_allow = ['почтовое отделение', 'г. краснодар, х.',
                      'г. краснодар, п.', 'г краснодар, х', 'ст-ца']
 
-        types = ['проезд', 'переулок', 'улица', 'проспект', 'бульвар',
-                 'набережная', 'сквер', 'площадь', 'набережная', 'тупик']
+        types = ['улица', 'проезд', 'переулок', 'проспект', 'набережная',
+                 'сквер', 'площадь', 'набережная', 'тупик', 'бульвар']
 
         check_num = street.split()
         for ch in check_num:
@@ -39,7 +39,12 @@ def check_address(street, a_links, street_addresses=None):
                     break
             break
 
-        check_street = "".join([street.lower().replace(t, '') for t in types if t in street.lower()]).strip()
+        check_street = street
+        for t in types:
+            if t in street.lower():
+                check_street = street.lower().replace(t, '')
+                break
+
         check_street = " ".join(check_street.split()) if check_street else street.lower()
 
         if check_street not in address_building.lower():
@@ -67,9 +72,37 @@ def check_url(browser_url, a_url):
     c_url = "/".join(c_url[0:2] + ['аис.фрт.рф'] + c_url[3:])
     if c_url != a_url:
         print(c_url, a_url)
-        time.sleep(30)
-        print("ЗАВЕРШЕНИЕ ПРОГРАММЫ")
-        sys.exit()
+        time.sleep(60)
+        return False
+    return True
+
+
+def make_beautiful_number(num_building):
+    """
+    Функция для обработки и приведения к нужному формату номера здания
+    :param num_building: Строка с адресом здания
+    :return: Номер здания
+    """
+
+    symbol = ' д ' if ' д. ' not in num_building else ' д. '
+    try:
+        if len(num_building.split(symbol)) >= 2:
+            num = num_building.split(symbol)[1]
+        else:
+            num = num_building.split('д.')[1]
+    except Exception as e:
+        print(e)
+        return False
+
+    num = "".join([i for i in num if i.isdigit() or i.isalpha() or i == '/'])
+
+    for_change = {'литеры': 'лит', 'литер': 'лит', 'корпус': 'корп'}
+    for k, v in for_change.items():
+        if k in num:
+            num = num.replace(k, v)
+            break
+
+    return num
 
 
 def get_buildings_info(json_addresses, url):
@@ -82,7 +115,11 @@ def get_buildings_info(json_addresses, url):
 
     browser = wd.Chrome()
     browser.get(url)
-    check_url(browser.current_url, url)
+    if not check_url(browser.current_url, url):
+        if not check_url(browser.current_url, url):
+            print("ЗАВЕРШЕНИЕ ПРОГРАММЫ")
+            sys.exit()
+
     search_class = 'col-12 py-3 ui-autocomplete-input'
     button_class = 'col-12 find-button text-uppercase'
     button_teg = 'button'
@@ -93,9 +130,17 @@ def get_buildings_info(json_addresses, url):
             continue
 
         street_info_dict = get_dict(f"files/buildings_intermediate/buildings_info_{key}.json")
+
+        # Если словарь не пуст, удаляем последнее значение, так как из-за прерывания программы
+        # информация могла сохраниться не полностью
+        if street_info_dict:
+            street_info_dict.popitem()
+
         streets = set(s.strip().split(',')[0] for s in value.keys())
         # перебираем улицы в множестве
         for street in streets:
+            if street == "Краснодарская улица":
+                continue
             if street in street_info_dict:
                 print('СОХРАНЕННАЯ УЛИЦА:', street)
                 continue
@@ -123,16 +168,23 @@ def get_buildings_info(json_addresses, url):
                 pages = pagination.find_all('a', class_='page-link')
                 if len(pages) > 1:
                     for i in range(2, int(pages[-2].text) + 1):
-                        link = browser.find_element(By.LINK_TEXT, str(i))
+                        try:
+                            time.sleep(2)
+                            print(i)
+                            link = browser.find_element(By.LINK_TEXT, str(i))
+                        except Exception as e:
+                            print(e)
+
+                            #time.sleep(60)
+                            #sys.exit()
+                            #continue
+                            break
+
                         browser.execute_script("arguments[0].click();", link)
                         browser.implicitly_wait(15)
                         time.sleep(2)
                         soup = BeautifulSoup(browser.page_source, 'lxml')
-                        try:
-                            a_links = soup.find_all('a', class_='green-link-only-hover f-16')
-                        except Exception as e:
-                            print(e)
-                            continue
+                        a_links = soup.find_all('a', class_='green-link-only-hover f-16')
                         street_addresses = check_address(street, a_links, street_addresses)
 
             # если информация не найдена пропускаем итерацию
@@ -148,7 +200,10 @@ def get_buildings_info(json_addresses, url):
                 address_url = 'https://аис.фрт.рф' + article['href']
                 browser.get(address_url)
                 browser.implicitly_wait(15)
-                check_url(browser.current_url, address_url)
+                if not check_url(browser.current_url, address_url):
+                    if not check_url(browser.current_url, address_url):
+                        print("ЗАВЕРШЕНИЕ ПРОГРАММЫ")
+                        sys.exit()
 
                 soup = BeautifulSoup(browser.page_source, 'lxml')
                 num_building = soup.find('div', class_='house-description-address__title')
@@ -157,19 +212,12 @@ def get_buildings_info(json_addresses, url):
                     continue
 
                 # получаем номер дома
-                num_building = num_building.text
-                print('Номер дома до обработки:', num_building)
-                symbol = ' д ' if ' д. ' not in num_building else ' д. '
-                try:
-                    if len(num_building.split(symbol)) >= 2:
-                        num = num_building.split(symbol)[1]
-                    else:
-                        num = num_building.split('д.')[1]
-                except Exception as e:
-                    print(e)
+                print('Номер дома до обработки:', num_building.text)
+
+                num = make_beautiful_number(num_building.text)
+                if not num:
                     continue
 
-                num = "".join([i for i in num if i.isdigit() or i.isalpha() or i == '/'])
                 print('Номер дома после обработки:', num, '\n')
                 # получаем информацию о здании
                 all_info = soup.find('div', class_='house-description-info')
@@ -210,7 +258,6 @@ def get_buildings_info(json_addresses, url):
                 json.dump(street_info_dict, outfile)
 
         result_dict[key] = street_info_dict
-
         with open('files/buildings_info.json', 'w') as outfile:
             json.dump(result_dict, outfile)
 
